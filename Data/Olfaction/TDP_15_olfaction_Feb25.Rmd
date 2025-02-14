@@ -1,0 +1,115 @@
+---
+title: "TDP43 mice olfaction analysis - 15 weeks"
+output: html_document
+date: "2025-02-05"
+---
+***Load libraries and data***
+```{r}
+library(readr)
+library(forcats)
+library(lme4)
+library(ggplot2)
+library(lmerTest)
+library(emmeans)
+library(ggResidpanel)
+library(car)
+library(plyr)
+library(dplyr)
+library(table1)
+
+setwd("~/Desktop/Data/Olfaction/")
+
+# read in data 
+data_mouse <- read_csv("TDP_15weeks_standard_harmonised.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+  sex = 'f',
+  smell = 'f'
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+data_mouse$smell <- as.factor(data_mouse$smell)
+data_mouse$sex <- as.factor(data_mouse$sex)
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+
+
+table1::label(data_mouse$genotype) <- "genotype"
+table1::label(data_mouse$sex) <- "sex"
+table1::label(data_mouse$smell) <- "smell"
+	
+table1::table1(~  smell | genotype, data = data_mouse)
+
+#F1 - familiar mouse odour presented 1st time, F2 - familiar - second time, F3 - familiar third time, N - novel mouse odour, W - water
+
+```
+
+***LMER - olfaction habituation-dishabituation - Tdp43 - 15 weeks***
+
+
+```{r}
+#relevel the data to compare everything in the model to control mice
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model 
+ME_EXPL<- lmer(time~genotype*(smell + sex) + (1|animal_name),data = data_mouse)
+summary(ME_EXPL)
+resid_panel(ME_EXPL) 
+anova(ME_EXPL, type=3)
+emmeans(ME_EXPL, list(pairwise ~ smell|genotype), adjust = "bonferroni")
+
+
+```
+
+***Plot - olfaction habituation-dishabituation - Tdp43 - 15 weeks***
+
+
+```{r}
+# Calculate means and standard errors per group for plotting
+EXPL_olf_15 <- ddply(data_mouse, c("smell", "genotypeordered"), summarise,
+                    N    = length(time),
+                    mean = mean(time, na.rm = TRUE),
+                    sd   = sd(time, na.rm = TRUE),
+                    se   = sd / sqrt(N))
+
+# Ensure the factor levels are ordered as desired
+EXPL_olf_15$genotypeordered <- factor(EXPL_olf_15$genotypeordered, levels = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+data_mouse$genotypeordered <- factor(data_mouse$genotypeordered, levels = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+
+# Plot averages per group
+pEXPL_olf_15 <- ggplot(EXPL_olf_15, aes(x = smell, y = mean, group = genotypeordered, colour = genotypeordered)) +
+  geom_point(size=0.6) + 
+  geom_line(linewidth=0.6) + # Add line plot 
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth=0.2, linetype="solid")+
+  ylab("Time sniffing (s)") + # Sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 50, by = 10), limits = c(0, 50), expand = c(0, 0)) +  # Set y-axis breaks with step size of 10
+  xlab("Odour presentation") + # Sets the x-axis label
+  theme_classic(base_size = 8) + # Classic theme makes white background without lines, sets base font size to 14 pt
+  theme(
+    text = element_text(family = "Arial"),
+    legend.position = c(0.42, 0.98), # Position legend within plotting space
+    legend.direction = "horizontal", # Arrange legend items horizontally
+    legend.text.align = 0,
+    legend.spacing = unit(0, "cm"), # Remove spacing between legend sections
+    legend.key.height = unit(0, "cm"),  # Adjust vertical spacing
+    legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+    legend.title = element_text(size = 8, face="bold", family = "Arial"), # Set font size for legend title
+    axis.title.x = element_text(size = 8, face="bold", family = "Arial"), # Set font size for x-axis label
+    axis.title.y = element_text(size = 8, face="bold", family = "Arial"), 
+    axis.text.x = element_text(size = 8, colour="black", family = "Arial"), # Set font size for x-axis tick labels
+    axis.text.y = element_text(size = 8, colour="black", family = "Arial"),
+    legend.background = element_rect(fill = NA, colour = NA)) + # Adds a legend
+  scale_colour_manual(name = "15 weeks", # Sets the legend title
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # Sets the order of items in the legend
+                      labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # Sets the labels of items in the legend
+                      values = c("#0072B2", "#D55E00")) # Set line colours
+
+# Save the plot
+ggsave("TDP_smell_15weeks_up_600-arial.tiff", plot = pEXPL_olf_15, width = 3.5, height = 2.3, dpi = 600)  # Adjust width, height, and dpi as needed and save as an image in the folder where the code file is
+
+# Display the plot
+pEXPL_olf_15
+
+```
+
+
+

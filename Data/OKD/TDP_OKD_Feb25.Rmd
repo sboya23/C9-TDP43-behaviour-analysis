@@ -1,0 +1,169 @@
+---
+title: "Tdp43 mice - optokinetic drum (OKD) analysis"
+output: html_document
+date: "2025-02-05"
+---
+***Load libraries and data***
+
+```{r}
+library(readr)
+library(forcats)
+library(lme4)
+library(ggplot2)
+library(lmerTest)
+library(emmeans)
+library(ggResidpanel)
+library(plyr)
+library(dplyr)
+library(car)
+library(ggsignif)
+library(table1)
+
+setwd("~/Desktop/Data/OKD/")
+
+
+# read in data 
+nov_freq <- read_csv("TDP-okd-upd_standard_harmonised.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+  sex = 'f',
+  mean_experimental_age = 'f'
+))
+
+nov_freq$genotypeordered <- ordered(nov_freq$genotype, levels=c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+nov_freq$genotype <- as.factor(nov_freq$genotype)
+nov_freq$sex <- as.factor(nov_freq$sex)
+nov_freq$mean_experimental_age <- as.factor(nov_freq$mean_experimental_age)
+
+table1::label(nov_freq$genotype) <- "genotype"
+table1::label(nov_freq$mean_experimental_age) <- "age"
+table1::label(nov_freq$sex) <- "sex"
+
+	
+table1::table1(~  mean_experimental_age | genotype, data = nov_freq)
+
+
+```
+
+***LMER - OKD***
+
+```{r}
+#relevel the data to compare everything in the model to control mice
+nov_freq$genotype <- relevel(nov_freq$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model
+ME_EXPL<- lmer(acuity~genotype*(mean_experimental_age+sex) +(1|animal_name),data = nov_freq)
+summary(ME_EXPL)
+resid_panel(ME_EXPL) 
+anova(ME_EXPL, type=3)
+#Post-hoc - relevant contrasts
+emm <- emmeans(ME_EXPL, ~genotype*mean_experimental_age)
+str(emm)
+coef_t_okd_tdp <- coef(pairs(emm))
+custom_contrasts1 <- list("Wt 16 vs 68 weeks" = c(1, 0, -1, 0),
+                         "Hom 16 vs 68 weeks" = c(0, 1, 0, -1))
+specific_comparisons1 <-contrast(emm, custom_contrasts1)
+summary_comparisons1 <- summary(specific_comparisons1, adjust="bonferroni")
+p_value1 <- summary_comparisons1$p.value
+print(p_value1)
+print(summary_comparisons1)
+
+```
+
+
+
+***Plot visual acuity by age and age genotype***
+
+```{r}
+
+# take means and se per group for plotting Duration
+
+EXPLageAvg <- ddply(nov_freq, c("mean_experimental_age", "genotype"), summarise,
+               N    = length(acuity),
+               mean = mean(acuity, na.rm = TRUE),
+               sd   = sd(acuity, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+
+# Ensure the factor levels are ordered as desired
+EXPLageAvg$mean_experimental_age <- factor(EXPLageAvg$mean_experimental_age, levels = c("16", "68"))
+nov_freq$mean_experimental_age <- factor(nov_freq$mean_experimental_age, levels = c("16", "68"))
+
+# Combine genotype and age for the x-axis and set specific levels to control order and spacing
+EXPLageAvg$genotype_age <- factor(paste(EXPLageAvg$genotype, EXPLageAvg$mean_experimental_age, sep = "_"),
+                                  levels = c("TDP-43_Q331K:WT_16", "TDP-43_Q331K:WT_68", 
+                                             "TDP-43_Q331K:Hom_16", "TDP-43_Q331K:Hom_68"))
+nov_freq$genotype_age <- factor(paste(nov_freq$genotype, nov_freq$mean_experimental_age, sep = "_"),
+                                levels = c("TDP-43_Q331K:WT_16", "TDP-43_Q331K:WT_68", 
+                                             "TDP-43_Q331K:Hom_16", "TDP-43_Q331K:Hom_68"))
+
+# Plot averages per group
+pEXPLageAvg <- ggplot(EXPLageAvg, aes(x = genotype_age, y = mean, colour = genotype, shape=mean_experimental_age)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.5, alpha = 0) + 
+  geom_jitter(data = nov_freq, aes(x = genotype_age, y = acuity, colour = genotype, shape = mean_experimental_age), 
+              position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5), size = 0.8) + # Add individual data points
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.2, position = position_dodge(0.5), colour = "black") + # Add error bars
+  ylab("Spatial frequency (cycles/degree)") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1), expand = c(0, 0)) +  # Set y-axis breaks with step size of 0.1
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c("TDP-43_Q331K:WT_16" = bquote(bold(atop("WT", "16 wk"))),
+                              "TDP-43_Q331K:WT_68" = bquote(bold(atop("WT", "68 wk"))), 
+                              "TDP-43_Q331K:Hom_16" = bquote(atop(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"), bold("16 wk"))), 
+                              "TDP-43_Q331K:Hom_68" = bquote(atop(bolditalic("\u2003\u2003\u2003\u2003\u2003Tardbp")^bolditalic("Q331K/Q331K"), bold("\u2003\u2003\u2003\u2003\u200368 wk"))) ))+ 
+
+  theme_classic(base_size = 8) + # classic theme makes white background without lines, sets base font size to 14 pt
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.35, 0.92), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial", hjust=0.67),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA)) + # Rotate x-axis labels for better readability
+        scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # sets the order of items in the legend
+                      labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # sets the labels of items in the legend
+                      values = c("#0072B2", "#D55E00")) + # set line colours for points
+  scale_shape_manual(name = "Age (weeks)", # sets the legend title for shape
+                     values = c("16" = 1, "68" = 16)) + # set shapes for ages (16 = filled circle, 1 = empty circle)
+guides(
+    colour = guide_legend(order = 1, override.aes = list(shape=NA)), # Use only lines for Genotype
+    shape = guide_legend(order = 2) # Keep shape legend for Age (weeks)
+  )
+# Add significance stars using geom_signif
+pEXPLageAvg <- pEXPLageAvg +
+  geom_signif(comparisons = list(
+    c("TDP-43_Q331K:WT_16", "TDP-43_Q331K:WT_68"),
+    c("TDP-43_Q331K:Hom_16", "TDP-43_Q331K:Hom_68")
+  ),
+  annotations = c(
+    ifelse(p_value1[1] < 0.0001, "****",
+           ifelse(p_value1[1] < 0.001, "***",
+               ifelse(p_value1[1] < 0.01, "**",
+                  ifelse(p_value1[1] < 0.05, "*", "ns")))),
+    ifelse(p_value1[2] < 0.0001, "****",
+           ifelse(p_value1[2] < 0.001, "***",
+           ifelse(p_value1[2] < 0.01, "**",
+                  ifelse(p_value1[2] < 0.05, "*", "ns"))))
+   
+  ),
+  y_position = c(0.6, 0.6), # Adjust positions as needed
+  tip_length = 0.02, textsize = 7,
+  color = "black", family = "Arial")
+
+# Save the plot
+ggsave("TDP_OKD_av_600_colours-arial.tiff", plot = pEXPLageAvg, width = 3.5, height = 3, dpi = 600)  # Adjust width, height, and dpi as needed and save the image in the folder where the code file is
+
+# Display the plot
+pEXPLageAvg
+
+```
+
+
+

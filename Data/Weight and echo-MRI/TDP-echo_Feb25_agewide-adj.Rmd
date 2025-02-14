@@ -1,0 +1,303 @@
+---
+title: "TDP43 mice - echo-MRI analysis"
+output: html_document
+date: "2025-02-05"
+---
+
+***Load libraries and data***
+```{r}
+library(readr)
+library(forcats)
+library(lme4)
+library(ggplot2)
+library(lmerTest)
+library(emmeans)
+library(ggResidpanel)
+library(car)
+library(plyr)
+library(dplyr)
+
+#Set working directory to location of files, if not the same
+
+setwd("~/Desktop/Data/Weight and echo-MRI/")
+
+# read in data 
+data_mouse <- read_csv("TDP-echo-checked-data-for-R_harmonised.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+  sex = 'f',
+  mean_experimental_age = 'f'
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+data_mouse$sex <- as.factor(data_mouse$sex)
+data_mouse$mean_experimental_age <- as.factor(data_mouse$mean_experimental_age)
+
+table1::label(data_mouse$genotype) <- "genotype"
+table1::label(data_mouse$mean_experimental_age) <- "age"
+table1::label(data_mouse$sex) <- "sex"
+
+	
+table1::table1(~  mean_experimental_age | genotype*sex, data = data_mouse)
+
+
+```
+
+
+
+***LMER - fat mass***
+```{r}
+#FAT MASS
+#relevel the data to compare everything in the model to control mice
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model taking 
+ME_EXPL<- lmer(fatmass~genotype*(mean_experimental_age + sex) + mean_experimental_age*sex +(1|animal_name),data = data_mouse)
+summary(ME_EXPL)
+resid_panel(ME_EXPL)
+anova(ME_EXPL, type=3)
+
+
+
+# Compute total number of comparisons across all age levels
+total_comparisons_fat <- length(unique(data_mouse$mean_experimental_age)) * length(unique(data_mouse$genotype))
+
+# Compute estimated marginal means (EMMs)
+emms_fat <- emmeans(ME_EXPL, ~ genotype * sex | mean_experimental_age, 
+                ddf = "Kenward-Roger")  # Specify degrees-of-freedom method
+
+# Initialize a list to store results
+results_fat <- list()
+
+# Loop through each level of mean_experimental_age
+age_levels_fat <- unique(data_mouse$mean_experimental_age)
+
+for (age in age_levels_fat) {
+  # Subset emmeans for the current mean_experimental_age level
+  emms_age_fat <- emmeans(ME_EXPL, ~ genotype * sex, at = list(mean_experimental_age = age), 
+                      ddf = "Kenward-Roger")
+  
+  # Perform pairwise comparisons for sex within each genotype
+  pairwise_comparisons_fat <- contrast(emms_age_fat, method = "pairwise", by = "sex")
+  
+  # Extract summary of pairwise comparisons
+  summary_comparisons_fat <- summary(pairwise_comparisons_fat)
+  
+  # Apply Bonferroni correction across ALL ages
+  summary_comparisons_fat$adjusted_p <- p.adjust(summary_comparisons_fat$p.value, method = "bonferroni", n = total_comparisons_fat)
+  
+  # Ensure p-values are displayed as decimals
+  summary_comparisons_fat$p.value <- round(as.numeric(summary_comparisons_fat$p.value), 10)
+  summary_comparisons_fat$adjusted_p <- round(as.numeric(summary_comparisons_fat$adjusted_p), 10)
+  
+  # Add additional information
+  summary_comparisons_fat$mean_experimental_age <- age
+  summary_comparisons_fat$ddf_method <- "Kenward-Roger"
+  summary_comparisons_fat$adjustment_method <- "Bonferroni (Global)"
+  summary_comparisons_fat$family_size <- total_comparisons_fat
+  
+  # Store results in a list
+  results_fat[[as.character(age)]] <- summary_comparisons_fat
+}
+
+# Combine the results into a single data frame
+all_results_fat <- do.call(rbind, results_fat)
+
+# View the results
+print(all_results_fat)
+
+
+
+
+```
+
+***LMER - lean mass***
+
+```{r}
+#LEAN MASS
+#relevel the data to compare everything in the model to control mice
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model taking into account 2 batches of mice tested (at 3, 6, 9 months and the other at 10, 14 months)
+ME_EXPL3<- lmer(leanmass~genotype*(mean_experimental_age + sex) + mean_experimental_age*sex +(1|animal_name),data = data_mouse)
+summary(ME_EXPL3)
+resid_panel(ME_EXPL3) 
+anova(ME_EXPL3, type=3)
+
+
+
+
+# Compute total number of comparisons across all age levels
+total_comparisons_lean <- length(unique(data_mouse$mean_experimental_age)) * length(unique(data_mouse$genotype))
+
+# Compute estimated marginal means (EMMs)
+emms_lean <- emmeans(ME_EXPL3, ~ genotype * sex | mean_experimental_age, 
+                ddf = "Kenward-Roger")  # Specify degrees-of-freedom method
+
+# Initialize a list to store results
+results_lean <- list()
+
+# Loop through each level of mean_experimental_age
+age_levels_lean <- unique(data_mouse$mean_experimental_age)
+
+for (age in age_levels_lean) {
+  # Subset emmeans for the current mean_experimental_age level
+  emms_age_lean <- emmeans(ME_EXPL3, ~ genotype * sex, at = list(mean_experimental_age = age), 
+                      ddf = "Kenward-Roger")
+  
+  # Perform pairwise comparisons for sex within each genotype
+  pairwise_comparisons_lean <- contrast(emms_age_lean, method = "pairwise", by = "sex")
+  
+  # Extract summary of pairwise comparisons
+  summary_comparisons_lean <- summary(pairwise_comparisons_lean)
+  
+  # Apply Bonferroni correction across ALL ages
+  summary_comparisons_lean$adjusted_p <- p.adjust(summary_comparisons_lean$p.value, method = "bonferroni", n = total_comparisons_lean)
+  
+  # Ensure p-values are displayed as decimals
+  summary_comparisons_lean$p.value <- round(as.numeric(summary_comparisons_lean$p.value), 10)
+  summary_comparisons_lean$adjusted_p <- round(as.numeric(summary_comparisons_lean$adjusted_p), 10)
+  
+  # Add additional information
+  summary_comparisons_lean$mean_experimental_age <- age
+  summary_comparisons_lean$ddf_method <- "Kenward-Roger"
+  summary_comparisons_lean$adjustment_method <- "Bonferroni (Global)"
+  summary_comparisons_lean$family_size <- total_comparisons_lean
+  
+  # Store results in a list
+  results_lean[[as.character(age)]] <- summary_comparisons_lean
+}
+
+# Combine the results into a single data frame
+all_results_lean <- do.call(rbind, results_lean)
+
+# View the results
+print(all_results_lean)
+
+
+
+
+
+```
+
+***Plot - fat mass***
+```{r}
+#FAT MASS
+data_mouse <- data_mouse %>%
+  mutate(genotype_sex = paste(genotype, sex, sep = "_"))
+
+
+# Include 'sex' explicitly in the grouping variables
+EXPL_fat <- ddply(data_mouse, c("mean_experimental_age", "genotype_sex", "sex", "genotype"), summarise,
+               N    = length(fatmass),
+               mean = mean(fatmass, na.rm = TRUE),
+               sd   = sd(fatmass, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+# Plot averages per group
+pEXPL_fat <- ggplot(EXPL_fat, aes(x = mean_experimental_age, y = mean, group = genotype_sex, linetype = sex, colour = genotype)) +
+  geom_point(size=0.6) + 
+  geom_line(linewidth=0.6) + # Add line plot 
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth=0.2, linetype="solid") + # Add error bars
+  ylab("Fat mass (g)")  + # Set the y-axis label
+  scale_y_continuous(breaks = seq(0, 50, by = 10), limits = c(0, 50), expand = c(0, 0)) +  # Set y-axis breaks with step size of 5
+  xlab("Age (weeks)")  + # Set the x-axis label
+  theme_classic(base_size = 8) + # Classic theme, white background, base font size 8
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.35, 0.92), # Position legend within plotting space
+    legend.direction = "horizontal", # Arrange legend items horizontally
+    legend.text.align = 0,
+    legend.spacing = unit(0, "cm"), # Remove spacing between legend sections
+    legend.spacing.y = unit(0, "cm"), # Remove spacing between legend lines
+    legend.key.height = unit(0, "cm"),  # Adjust vertical spacing
+    legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+    legend.title = element_text(size = 8, face="bold", family = "Arial"), # Set font size for legend title
+    axis.title.x = element_text(size = 8, face="bold", family = "Arial"), # Set font size for x-axis label
+    axis.title.y = element_text(size = 8, face="bold", family = "Arial"),
+    axis.text.x = element_text(size = 8, colour="black", family = "Arial"), # Set font size for x-axis tick labels
+    axis.text.y = element_text(size = 8, colour="black", family = "Arial")# Set font size for y-axis label
+  ) +
+  scale_colour_manual(name = NULL, # Customize the color legend
+    breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # Order of items in legend
+    labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # Labels in legend
+    values = c("#0072B2", "#D55E00") # Colors for genotypes
+  ) +
+  scale_linetype_manual(name = NULL, # Customize the line type legend
+    breaks = c("f", "m"), # Order of items in legend
+    labels = c("Female", "Male"), # Labels in legend
+    values = c("solid", "dashed") # Line types for sex
+  )+
+guides(
+    colour = guide_legend(order = 1), # Genotype appears first
+    linetype = guide_legend(order = 2) # Sex appears second
+  )
+# Save the plot
+ggsave("TDP_fatmass_linetype_colour_600_legend-arial.tiff", width =3.5, height = 3, dpi = 600)  # Save as an image
+
+# Display the plot
+pEXPL_fat
+```
+***Plot - lean mass***
+```{r}
+#LEAN MASS
+# take means and se per group for plotting
+data_mouse <- data_mouse %>%
+  mutate(genotype_sex = paste(genotype, sex, sep = "_"))
+
+
+# Include 'sex' explicitly in the grouping variables
+EXPL_lean <- ddply(data_mouse, c("mean_experimental_age", "genotype_sex", "sex", "genotype"), summarise,
+               N    = length(leanmass),
+               mean = mean(leanmass, na.rm = TRUE),
+               sd   = sd(leanmass, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+# Plot averages per group
+pEXPL_lean <- ggplot(EXPL_lean, aes(x = mean_experimental_age, y = mean, group = genotype_sex, linetype = sex, colour = genotype)) +
+  geom_point(size=0.6) + 
+  geom_line(linewidth=0.6) + # Add line plot 
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth=0.2, linetype="solid") + # Add error bars
+  ylab("Lean mass (g)")  + # Set the y-axis label
+  scale_y_continuous(breaks = seq(0, 50, by = 10), limits = c(0, 50), expand = c(0, 0)) +  # Set y-axis breaks with step size of 5
+  xlab("Age (weeks)")  + # Set the x-axis label
+  theme_classic(base_size = 8) + # Classic theme, white background, base font size 8
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.35, 0.92), # Position legend within plotting space
+    legend.direction = "horizontal", # Arrange legend items horizontally
+    legend.text.align = 0,
+    legend.spacing = unit(0, "cm"), # Remove spacing between legend sections
+    legend.spacing.y = unit(0, "cm"), # Remove spacing between legend lines
+    legend.key.height = unit(0, "cm"),  # Adjust vertical spacing
+    legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+    legend.title = element_text(size = 8, face="bold", family = "Arial"), # Set font size for legend title
+    axis.title.x = element_text(size = 8, face="bold", family = "Arial"), # Set font size for x-axis label
+    axis.title.y = element_text(size = 8, face="bold", family = "Arial"),
+    axis.text.x = element_text(size = 8, colour="black", family = "Arial"), # Set font size for x-axis tick labels
+    axis.text.y = element_text(size = 8, colour="black", family = "Arial")## Set font size for y-axis label
+  ) +
+  scale_colour_manual(name = NULL, # Customize the color legend
+    breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # Order of items in legend
+    labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # Labels in legend
+    values = c("#0072B2", "#D55E00") # Colors for genotypes
+  ) +
+  scale_linetype_manual(name = NULL, # Customize the line type legend
+    breaks = c("f", "m"), # Order of items in legend
+    labels = c("Female", "Male"), # Labels in legend
+    values = c("solid", "dashed") # Line types for sex
+  )+
+guides(
+    colour = guide_legend(order = 1), # Genotype appears first
+    linetype = guide_legend(order = 2) # Sex appears second
+  )
+# Save the plot
+ggsave("TDP_leanmass_linetype_colour_600_legend-arial.tiff", width =3.5, height = 3, dpi = 600)  # Save as an image
+
+# Display the plot
+pEXPL_lean
+
+```
+
+

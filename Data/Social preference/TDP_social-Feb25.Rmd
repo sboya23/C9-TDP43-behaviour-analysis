@@ -1,0 +1,724 @@
+---
+title: "TDP43 mice - social preference test"
+output: html_document
+date: "2024-12-19"
+---
+
+***Load Libs and data***
+```{r}
+library(readr)
+library(forcats)
+library(lme4)
+library(ggplot2)
+library(lmerTest)
+library(emmeans)
+library(ggResidpanel)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(car)
+library(ggsignif)
+library(table1)
+
+#Set working directory to location of files, if not the same
+setwd("~/Desktop/Data/Social preference/")
+
+
+```
+
+
+***Pre-process**
+```{r}
+df <- read_csv("TDP43-Q331K-BEHAV_Three Chamber Test_processed_data.csv")
+df1<- within(df, rm(genotype))
+df_gen <- read_csv("TDP43-genotype.csv")
+joined_df1 <- left_join(df1, df_gen, by = "animal_name")
+
+df2 <- joined_df1 %>% pivot_wider(names_from = parameter, values_from = data)
+
+#print(colnames(df2))
+
+
+write.csv(df2, "Threechamber-pivoted-TDP.csv", row.names = FALSE)
+
+
+##############################
+#Calculate distances and SPRs#
+##############################
+
+
+df_new <- df2 %>%
+  mutate(
+    dist_hab_overall = rowSums(across(contains("Distance moved total") & contains("Habituation")), na.rm = TRUE),
+    dist_test_overall = rowSums(across(contains("Distance moved total") & contains("Test")), na.rm = TRUE),
+    time_m = rowSums(across(contains("Mouse Interaction Duration") & contains("Test")), na.rm = TRUE),
+    time_o = rowSums(across(contains("Object Interaction Duration") & contains("Test")), na.rm = TRUE),
+    SPRtime = time_m / (time_m + time_o),
+    SPRfreq = rowSums(across(contains("Mouse Interaction Frequency") & contains("Test")), na.rm = TRUE) /
+              rowSums(across(contains("Interaction Frequency") & contains("Test")), na.rm = TRUE)
+  ) %>%
+  mutate(across(c(SPRtime, SPRfreq), ~ round(.x, 4)))
+
+write.csv(df_new, "updated_threechamber-pre-processed-TDP.csv", row.names = FALSE)
+# Display the updated DataFrame
+
+```
+
+***Read processed data for stats analysis***
+```{r}
+# read in data 
+data_mouse <- read_csv("updated_threechamber-pre-processed-TDP.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+  sex = 'f',
+  mean_experimental_age = 'f'
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("TDP-43_Q331K:Hom", "TDP-43_Q331K:WT"))
+data_mouse$mean_experimental_age <- as.factor(data_mouse$mean_experimental_age)
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+data_mouse$sex <- as.factor(data_mouse$sex)
+
+
+table1::label(data_mouse$genotype) <- "genotype"
+table1::label(data_mouse$sex) <- "sex"
+table1::label(data_mouse$mean_experimental_age) <- "mean_experimental_age"
+	
+table1::table1(~  mean_experimental_age | genotype, data = data_mouse)
+```
+
+
+
+***LMER - distance habituation***
+```{r}
+#relevel the data to compare everything in the model to control mice - DISTANCE TRAVELLED HABITUATION
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model 
+ME_EXPL_dist_hab<- lmer(dist_hab_overall~genotype*(mean_experimental_age + sex) + (1|animal_name),data = data_mouse)
+summary(ME_EXPL_dist_hab)
+resid_panel(ME_EXPL_dist_hab) 
+anova(ME_EXPL_dist_hab, type=3)
+
+#Post-hoc - relevant contrasts
+emm_dist_hab <- emmeans(ME_EXPL_dist_hab, ~genotype*mean_experimental_age)
+str(emm_dist_hab)
+coef_t_dist_hab <- coef(pairs(emm_dist_hab))
+custom_contrasts_dist_hab <- list("Wt vs hom 18  weeks" = c(1, -1, 0, 0),
+                         "wt vs Hom 71 weeks" = c(0, 0, 1, -1)
+                         )
+specific_comparisons_dist_hab <-contrast(emm_dist_hab, custom_contrasts_dist_hab)
+summary_comparisons_dist_hab <- summary(specific_comparisons_dist_hab, adjust="bonferroni")
+p_value_dist_hab <- summary_comparisons_dist_hab$p.value
+print(p_value_dist_hab)
+print(summary_comparisons_dist_hab)
+
+```
+
+
+**PLOT - distance habituation** 
+
+```{r}
+# take means and se per group for plotting DISTANCE TRAVELLED HABITUATION
+EXPL_dist_hab <- ddply(data_mouse, c("mean_experimental_age", "genotype"), summarise,
+               N    = length(dist_hab_overall),
+               mean = mean(dist_hab_overall, na.rm = TRUE),
+               sd   = sd(dist_hab_overall, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+
+# Ensure the factor levels are ordered as desired
+EXPL_dist_hab$mean_experimental_age <- factor(EXPL_dist_hab$mean_experimental_age, levels = c("18", "71"))
+data_mouse$mean_experimental_age <- factor(data_mouse$mean_experimental_age, levels = c("18", "71"))
+
+# Combine genotype and age for the x-axis and set specific levels to control order and spacing
+EXPL_dist_hab$genotype_age <- factor(paste(EXPL_dist_hab$genotype, EXPL_dist_hab$mean_experimental_age, sep = "_"),
+                                  levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                             "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+data_mouse$genotype_age <- factor(paste(data_mouse$genotype, data_mouse$mean_experimental_age, sep = "_"),
+                                levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                           "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+
+# Plot averages per group
+pEXPL_dist_hab <- ggplot(EXPL_dist_hab, aes(x = genotype_age, y = mean, colour = genotype, shape=mean_experimental_age)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.5, alpha = 0) + 
+  geom_jitter(data = data_mouse, aes(x = genotype_age, y = dist_hab_overall, colour = genotype, shape = mean_experimental_age), 
+              position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5), size = 0.8) + # Add individual data points
+   #  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") + # Add a dashed line at y = 0.5
+
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.2, position = position_dodge(0.5), colour = "black") + # Add error bars
+  ylab("Total distance travelled (cm) - habituation") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 7000, by = 1000), limits = c(0, 7000), expand = c(0, 0)) +  # Set y-axis breaks with step size of 0.1
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c("TDP-43_Q331K:WT_18" = bquote(bold(atop("WT", "18 wk"))),
+                              "TDP-43_Q331K:WT_71" = bquote(bold(atop("WT", "71 wk"))), 
+                              "TDP-43_Q331K:Hom_18" = bquote(atop(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"), bold("18 wk"))), 
+                              "TDP-43_Q331K:Hom_71" = bquote(atop(bolditalic("\u2003\u2003\u2003\u2003\u2003Tardbp")^bolditalic("Q331K/Q331K"), bold("\u2003\u2003\u2003\u200371 wk"))) ))+ 
+
+  theme_classic(base_size = 8) + # classic theme makes white background without lines, sets base font size to 14 pt
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.34, 0.92), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial", hjust=0.67),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA)) + # Rotate x-axis labels for better readability
+        scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # sets the order of items in the legend
+                      labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # sets the labels of items in the legend
+                      values = c("#0072B2", "#D55E00")) + # set line colours for points
+  scale_shape_manual(name = "Age (weeks)", # sets the legend title for shape
+                     values = c("18" = 1, "71" = 16)) + # set shapes for ages (16 = filled circle, 1 = empty circle)
+guides(
+    colour = guide_legend(order = 1, override.aes = list(shape=NA)), # Use only lines for Genotype
+    shape = guide_legend(order = 2) # Keep shape legend for Age (weeks)
+  )
+
+
+# Add significance stars using geom_signif
+pEXPL_dist_hab <- pEXPL_dist_hab +
+  geom_signif(comparisons = list(
+    c("TDP-43_Q331K:WT_71", "TDP-43_Q331K:Hom_71")
+   #c("MAT_69.5", "PAT_69.5")
+    
+  ),
+  annotations = c(
+    ifelse(p_value_dist_hab[2] < 0.0001, "****",
+           ifelse(p_value_dist_hab[2] < 0.001, "***",
+               ifelse(p_value_dist_hab[2] < 0.01, "**",
+                  ifelse(p_value_dist_hab[2] < 0.05, "*", ""))))
+  #  ifelse(p_value1[2] < 0.0001, "****",
+   #        ifelse(p_value1[2] < 0.001, "***",
+    #       ifelse(p_value1[2] < 0.01, "**",
+     #             ifelse(p_value1[2] < 0.05, "*", ""))))
+   
+  ),
+  y_position = c(4200), # Adjust positions as needed
+  tip_length = 0.02, textsize = 7,
+  color = "black", family = "Arial")
+
+
+
+
+# Save the plot
+ggsave("TDP_dist_hab_av_600_col-arial.tiff", plot = pEXPL_dist_hab, width = 3.5, height = 3, dpi = 600)  # Adjust width, height, and dpi as needed and save the image in the folder where the code file is
+
+# Display the plot
+pEXPL_dist_hab
+
+```
+
+
+***LMER - distance - test***
+```{r}
+#relevel the data to compare everything in the model to control mice - DISTANCE TRAVELLED TEST
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model 
+ME_EXPL_dist_test<- lmer(dist_test_overall~genotype*(mean_experimental_age + sex) +  (1|animal_name),data = data_mouse)
+summary(ME_EXPL_dist_test)
+resid_panel(ME_EXPL_dist_test) 
+anova(ME_EXPL_dist_test, type=3)
+
+#Post-hoc - relevant contrasts
+emm_dist_test <- emmeans(ME_EXPL_dist_test, ~genotype*mean_experimental_age)
+str(emm_dist_test)
+coef_t_dist_test <- coef(pairs(emm_dist_test))
+custom_contrasts_dist_test <- list("Wt vs hom 18  weeks" = c(1, -1, 0, 0),
+                         "wt vs Hom 71 weeks" = c(0, 0, 1, -1)
+                         )
+specific_comparisons_dist_test <-contrast(emm_dist_test, custom_contrasts_dist_test)
+summary_comparisons_dist_test <- summary(specific_comparisons_dist_test, adjust="bonferroni")
+p_value_dist_test <- summary_comparisons_dist_test$p.value
+print(p_value_dist_test)
+print(summary_comparisons_dist_test)
+
+```
+
+**PLOT - DISTANCE TEST**
+```{r}
+# take means and se per group for plotting DISTANCE TRAVELLED TEST
+EXPL_dist_test <- ddply(data_mouse, c("mean_experimental_age", "genotype"), summarise,
+               N    = length(dist_test_overall),
+               mean = mean(dist_test_overall, na.rm = TRUE),
+               sd   = sd(dist_test_overall, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+
+# Ensure the factor levels are ordered as desired
+EXPL_dist_test$mean_experimental_age <- factor(EXPL_dist_test$mean_experimental_age, levels = c("18", "71"))
+data_mouse$mean_experimental_age <- factor(data_mouse$mean_experimental_age, levels = c("18", "71"))
+
+# Combine genotype and age for the x-axis and set specific levels to control order and spacing
+EXPL_dist_test$genotype_age <- factor(paste(EXPL_dist_test$genotype, EXPL_dist_test$mean_experimental_age, sep = "_"),
+                                  levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                             "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+data_mouse$genotype_age <- factor(paste(data_mouse$genotype, data_mouse$mean_experimental_age, sep = "_"),
+                                levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                           "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+
+# Plot averages per group
+pEXPL_dist_test <- ggplot(EXPL_dist_test, aes(x = genotype_age, y = mean, colour = genotype, shape=mean_experimental_age)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.5, alpha = 0) + 
+  geom_jitter(data = data_mouse, aes(x = genotype_age, y = dist_test_overall, colour = genotype, shape = mean_experimental_age), 
+              position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5), size = 0.8) + # Add individual data points
+   #  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") + # Add a dashed line at y = 0.5
+
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.2, position = position_dodge(0.5), colour = "black") + # Add error bars
+  ylab("Total distance travelled (cm) - test") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 7000, by = 1000), limits = c(0, 7000), expand = c(0, 0)) +  # Set y-axis breaks with step size of 0.1
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c("TDP-43_Q331K:WT_18" = bquote(bold(atop("WT", "18 wk"))),
+                              "TDP-43_Q331K:WT_71" = bquote(bold(atop("WT", "71 wk"))), 
+                              "TDP-43_Q331K:Hom_18" = bquote(atop(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"), bold("18 wk"))), 
+                              "TDP-43_Q331K:Hom_71" = bquote(atop(bolditalic("\u2003\u2003\u2003\u2003\u2003Tardbp")^bolditalic("Q331K/Q331K"), bold("\u2003\u2003\u2003\u200371 wk"))) ))+ 
+
+  theme_classic(base_size = 8) + # classic theme makes white background without lines, sets base font size to 14 pt
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.34, 0.92), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial", hjust=0.67),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA)) + # Rotate x-axis labels for better readability
+        scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # sets the order of items in the legend
+                      labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # sets the labels of items in the legend
+                      values = c("#0072B2", "#D55E00")) + # set line colours for points
+  scale_shape_manual(name = "Age (weeks)", # sets the legend title for shape
+                     values = c("18" = 1, "71" = 16)) + # set shapes for ages (16 = filled circle, 1 = empty circle)
+guides(
+    colour = guide_legend(order = 1, override.aes = list(shape=NA)), # Use only lines for Genotype
+    shape = guide_legend(order = 2) # Keep shape legend for Age (weeks)
+  )
+
+# Add significance stars using geom_signif
+pEXPL_dist_test <- pEXPL_dist_test +
+  geom_signif(comparisons = list(
+    c("TDP-43_Q331K:WT_71", "TDP-43_Q331K:Hom_71")
+   #c("MAT_69.5", "PAT_69.5")
+    
+  ),
+  annotations = c(
+    ifelse(p_value_dist_test[2] < 0.0001, "****",
+           ifelse(p_value_dist_test[2] < 0.001, "***",
+               ifelse(p_value_dist_test[2] < 0.01, "**",
+                  ifelse(p_value_dist_test[2] < 0.05, "*", ""))))
+),
+  y_position = c(4200), # Adjust positions as needed
+  tip_length = 0.02, textsize = 7,
+  color = "black", family = "Arial")
+
+# Save the plot
+ggsave("TDP_dist_test_av_600_col-arial.tiff", plot = pEXPL_dist_test, width = 3.5, height = 3, dpi = 600)  # Adjust width, height, and dpi as needed and save the image in the folder where the code file is
+
+# Display the plot
+pEXPL_dist_test
+
+```
+
+
+
+
+
+
+
+
+***LMER - time with mouse***
+```{r}
+#relevel the data to compare everything in the model to control mice - TIME SPENT WITH MOUSE
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model 
+ME_EXPL_timem<- lmer(time_m~genotype*(mean_experimental_age+sex) + (1|animal_name),data = data_mouse) # used to have + side - but no effect - only fixes the residual a bit
+summary(ME_EXPL_timem)
+resid_panel(ME_EXPL_timem) 
+anova(ME_EXPL_timem, type=3)
+
+#Post-hoc - relevant contrasts
+emm_timem <- emmeans(ME_EXPL_timem, ~genotype*mean_experimental_age)
+str(emm_timem)
+coef_t_timem <- coef(pairs(emm_timem))
+custom_contrasts_timem <- list("Wt 18 vs 71 weeks" = c(1, 0, -1, 0),
+                         "Hom 18 vs 71 weeks" = c(0, 1, 0, -1)
+                         )
+specific_comparisons_timem <-contrast(emm_timem, custom_contrasts_timem)
+summary_comparisons_timem <- summary(specific_comparisons_timem, adjust="bonferroni")
+print(summary_comparisons_timem)
+
+
+
+#boundary (singular) fit: see help('isSingular') => run lm without animal_name as random effect
+ME_EXPL_timem_lm<- lm(time_m~genotype*(mean_experimental_age + sex) , data = data_mouse)
+summary(ME_EXPL_timem_lm)
+resid_panel(ME_EXPL_timem_lm) 
+Anova(ME_EXPL_timem_lm, type=3)
+#No Post-hocs to run 
+#No difference in final conclusion, report lmer for consistency  
+  
+
+
+```
+
+
+***LMER - time with object***
+```{r}
+#relevel the data to compare everything in the model to control mice - TIME SPENT WITH OBJECT
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model 
+ME_EXPL_timeo<- lmer(time_o~genotype*(mean_experimental_age+sex)+ (1|animal_name),data = data_mouse)# used to have + side - but no effect - only fixes the residual a bit
+summary(ME_EXPL_timeo)
+resid_panel(ME_EXPL_timeo) 
+anova(ME_EXPL_timeo, type=3)
+
+#Post-hoc - relevant contrasts
+emm_timeo <- emmeans(ME_EXPL_timeo, ~genotype*mean_experimental_age)
+str(emm_timeo)
+coef_t_timeo <- coef(pairs(emm_timeo))
+custom_contrasts_timeo <- list("Wt 18 vs 71 weeks" = c(1, 0, -1, 0),
+                         "Hom 18 vs 71 weeks" = c(0, 1, 0, -1)
+                         )
+specific_comparisons_timeo <-contrast(emm_timeo, custom_contrasts_timeo)
+summary_comparisons_timeo <- summary(specific_comparisons_timeo, adjust="bonferroni")
+print(summary_comparisons_timeo)
+
+
+#boundary (singular) fit: see help('isSingular') => run lm without animal_name as random effect
+ME_EXPL_timeo_fixed <- lm(time_o ~ genotype * (mean_experimental_age + sex), data = data_mouse)
+summary(ME_EXPL_timeo_fixed)
+resid_panel(ME_EXPL_timeo_fixed) 
+Anova(ME_EXPL_timeo_fixed, type=3)
+
+#No Post-hoc to do
+#No difference in final conclusion, report lmer for consistency  
+
+```
+
+***Plot - time with mouse by genotype and age***
+
+```{r}
+# take means and se per group for plotting TIME SPENT WITH MOUSE - GENOTYPE
+EXPL_time_m <- ddply(data_mouse, c("mean_experimental_age", "genotype"), summarise,
+               N    = length(time_m),
+               mean = mean(time_m, na.rm = TRUE),
+               sd   = sd(time_m, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+
+# Ensure the factor levels are ordered as desired
+EXPL_time_m$mean_experimental_age <- factor(EXPL_time_m$mean_experimental_age, levels = c("18", "71"))
+data_mouse$mean_experimental_age <- factor(data_mouse$mean_experimental_age, levels = c("18", "71"))
+
+# Combine genotype and age for the x-axis and set specific levels to control order and spacing
+EXPL_time_m$genotype_age <- factor(paste(EXPL_time_m$genotype, EXPL_time_m$mean_experimental_age, sep = "_"),
+                                  levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                             "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+data_mouse$genotype_age <- factor(paste(data_mouse$genotype, data_mouse$mean_experimental_age, sep = "_"),
+                                levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                           "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+
+# Plot averages per group
+pEXPL_time_m <- ggplot(EXPL_time_m, aes(x = genotype_age, y = mean, colour = genotype, shape=mean_experimental_age)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.5, alpha = 0) + 
+  geom_jitter(data = data_mouse, aes(x = genotype_age, y = time_m, colour = genotype, shape = mean_experimental_age), 
+              position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5), size = 0.8) + # Add individual data points
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.2, position = position_dodge(0.5), colour = "black") + # Add error bars
+  ylab("Time exploring novel mouse (s)") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 350, by = 50), limits = c(0, 350), expand = c(0, 0)) +  # Set y-axis breaks with step size of 0.1
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c("TDP-43_Q331K:WT_18" = bquote(bold(atop("WT", "18 wk"))),
+                              "TDP-43_Q331K:WT_71" = bquote(bold(atop("WT", "71 wk"))), 
+                              "TDP-43_Q331K:Hom_18" = bquote(atop(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"), bold("18 wk"))), 
+                              "TDP-43_Q331K:Hom_71" = bquote(atop(bolditalic("\u2003\u2003\u2003\u2003\u2003Tardbp")^bolditalic("Q331K/Q331K"), bold("\u2003\u2003\u2003\u200371 wk"))) ))+ 
+
+  theme_classic(base_size = 8) + # classic theme makes white background without lines, sets base font size to 14 pt
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.34, 0.91), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial", hjust=0.67),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA)) + # Rotate x-axis labels for better readability
+        scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # sets the order of items in the legend
+                      labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # sets the labels of items in the legend
+                      values = c("#0072B2", "#D55E00")) + # set line colours for points
+  scale_shape_manual(name = "Age (weeks)", # sets the legend title for shape
+                     values = c("18" = 1, "71" = 16)) + # set shapes for ages (16 = filled circle, 1 = empty circle)
+guides(
+    colour = guide_legend(order = 1, override.aes = list(shape=NA)), # Use only lines for Genotype
+    shape = guide_legend(order = 2) # Keep shape legend for Age (weeks)
+  )
+
+# Save the plot
+ggsave("TDP_time_m_av_600_col-arial.tiff", plot = pEXPL_time_m, width = 3.5, height = 2.75, dpi = 600)  # Adjust width, height, and dpi as needed and save the image in the folder where the code file is
+
+# Display the plot
+pEXPL_time_m
+
+```
+
+
+***Plot object exploration time averages by age and genotype***
+
+```{r}
+# take means and se per group for plotting TIME SPENT WITH OBJECT - GENOTYPE
+EXPL_time_o <- ddply(data_mouse, c("mean_experimental_age", "genotype"), summarise,
+               N    = length(time_o),
+               mean = mean(time_o, na.rm = TRUE),
+               sd   = sd(time_o, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+# Ensure the factor levels are ordered as desired
+EXPL_time_o$mean_experimental_age <- factor(EXPL_time_o$mean_experimental_age, levels = c("18", "71"))
+data_mouse$mean_experimental_age <- factor(data_mouse$mean_experimental_age, levels = c("18", "71"))
+
+# Combine genotype and age for the x-axis and set specific levels to control order and spacing
+EXPL_time_o$genotype_age <- factor(paste(EXPL_time_o$genotype, EXPL_time_o$mean_experimental_age, sep = "_"),
+                                  levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                             "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+data_mouse$genotype_age <- factor(paste(data_mouse$genotype, data_mouse$mean_experimental_age, sep = "_"),
+                                levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                           "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+
+# Plot averages per group
+pEXPL_time_o <- ggplot(EXPL_time_o, aes(x = genotype_age, y = mean, colour = genotype, shape=mean_experimental_age)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.5, alpha = 0) + 
+  geom_jitter(data = data_mouse, aes(x = genotype_age, y = time_o, colour = genotype, shape = mean_experimental_age), 
+              position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5), size = 0.8) + # Add individual data points
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.2, position = position_dodge(0.5), colour = "black") + # Add error bars
+  ylab("Time exploring object (s)") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 350, by = 50), limits = c(0, 350), expand = c(0, 0)) +  # Set y-axis breaks with step size of 0.1
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c("TDP-43_Q331K:WT_18" = bquote(bold(atop("WT", "18 wk"))),
+                              "TDP-43_Q331K:WT_71" = bquote(bold(atop("WT", "71 wk"))), 
+                              "TDP-43_Q331K:Hom_18" = bquote(atop(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"), bold("18 wk"))), 
+                              "TDP-43_Q331K:Hom_71" = bquote(atop(bolditalic("\u2003\u2003\u2003\u2003\u2003Tardbp")^bolditalic("Q331K/Q331K"), bold("\u2003\u2003\u2003\u200371 wk"))) ))+ 
+
+  theme_classic(base_size = 8) + # classic theme makes white background without lines, sets base font size to 14 pt
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.34, 0.91), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial", hjust=0.67),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA)) + # Rotate x-axis labels for better readability
+        scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # sets the order of items in the legend
+                      labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # sets the labels of items in the legend
+                      values = c("#0072B2", "#D55E00")) + # set line colours for points
+  scale_shape_manual(name = "Age (weeks)", # sets the legend title for shape
+                     values = c("18" = 1, "71" = 16)) + # set shapes for ages (16 = filled circle, 1 = empty circle)
+guides(
+    colour = guide_legend(order = 1, override.aes = list(shape=NA)), # Use only lines for Genotype
+    shape = guide_legend(order = 2) # Keep shape legend for Age (weeks)
+  )
+
+# Save the plot
+ggsave("TDP_time_o_av_600_col-arial.tiff", plot = pEXPL_time_o, width = 3.5, height = 2.75, dpi = 600)  # Adjust width, height, and dpi as needed and save the image in the folder where the code file is
+
+# Display the plot
+pEXPL_time_o
+
+```
+
+
+
+***LMER SPR Time***
+```{r}
+#relevel the data to compare everything in the model to control mice - SPR TIME
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model 
+ME_EXPL_SPR_t<- lmer(SPRtime~genotype*(mean_experimental_age + sex) + (1|animal_name),data = data_mouse)
+summary(ME_EXPL_SPR_t)
+resid_panel(ME_EXPL_SPR_t) 
+anova(ME_EXPL_SPR_t, type=3)
+```
+
+**Plot social preference ratio - time**
+
+```{r}
+# take means and se per group for plotting **SPR - TIME**
+EXPL_SPR_t <- ddply(data_mouse, c("mean_experimental_age", "genotype"), summarise,
+               N    = length(SPRtime),
+               mean = mean(SPRtime, na.rm = TRUE),
+               sd   = sd(SPRtime, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+# Ensure the factor levels are ordered as desired
+EXPL_SPR_t$mean_experimental_age <- factor(EXPL_SPR_t$mean_experimental_age, levels = c("18", "71"))
+data_mouse$mean_experimental_age <- factor(data_mouse$mean_experimental_age, levels = c("18", "71"))
+
+# Combine genotype and age for the x-axis and set specific levels to control order and spacing
+EXPL_SPR_t$genotype_age <- factor(paste(EXPL_SPR_t$genotype, EXPL_SPR_t$mean_experimental_age, sep = "_"),
+                                  levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                             "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+data_mouse$genotype_age <- factor(paste(data_mouse$genotype, data_mouse$mean_experimental_age, sep = "_"),
+                                levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                           "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+
+# Plot averages per group
+pEXPL_SPR_t <- ggplot(EXPL_SPR_t, aes(x = genotype_age, y = mean, colour = genotype, shape=mean_experimental_age)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.5, alpha = 0) + 
+  geom_jitter(data = data_mouse, aes(x = genotype_age, y = SPRtime, colour = genotype, shape = mean_experimental_age), 
+              position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5), size = 0.8) + # Add individual data points
+     geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") + # Add a dashed line at y = 0.5
+
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.2, position = position_dodge(0.5), colour = "black") + # Add error bars
+  ylab("SPR based on time (s)") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 1.5, by = 0.5), limits = c(0, 1.5), expand = c(0, 0)) +  # Set y-axis breaks with step size of 0.1
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c("TDP-43_Q331K:WT_18" = bquote(bold(atop("WT", "18 wk"))),
+                              "TDP-43_Q331K:WT_71" = bquote(bold(atop("WT", "71 wk"))), 
+                              "TDP-43_Q331K:Hom_18" = bquote(atop(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"), bold("18 wk"))), 
+                              "TDP-43_Q331K:Hom_71" = bquote(atop(bolditalic("\u2003\u2003\u2003\u2003\u2003Tardbp")^bolditalic("Q331K/Q331K"), bold("\u2003\u2003\u2003\u200371 wk"))) ))+ 
+
+  theme_classic(base_size = 8) + # classic theme makes white background without lines, sets base font size to 14 pt
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.34, 0.92), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial", hjust=0.67),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA)) + # Rotate x-axis labels for better readability
+        scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # sets the order of items in the legend
+                      labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # sets the labels of items in the legend
+                      values = c("#0072B2", "#D55E00")) + # set line colours for points
+  scale_shape_manual(name = "Age (weeks)", # sets the legend title for shape
+                     values = c("18" = 1, "71" = 16)) + # set shapes for ages (16 = filled circle, 1 = empty circle)
+guides(
+    colour = guide_legend(order = 1, override.aes = list(shape=NA)), # Use only lines for Genotype
+    shape = guide_legend(order = 2) # Keep shape legend for Age (weeks)
+  )
+
+# Save the plot
+ggsave("TDP_SPR_t_av_600_col-arial.tiff", plot = pEXPL_SPR_t, width = 3.5, height = 3, dpi = 600)  # Adjust width, height, and dpi as needed and save the image in the folder where the code file is
+
+# Display the plot
+pEXPL_SPR_t
+
+```
+
+***LMER SPR Frequency***
+```{r}
+#relevel the data to compare everything in the model to control mice SPR FREQUENCY 
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effecrts model taking into account 2 batches of mice tested (at 3, 6, 9 months and the other at 10, 14 months)
+ME_EXPL_SPR_f<- lmer(SPRfreq~genotype*(mean_experimental_age + sex) + (1|animal_name),data = data_mouse)
+summary(ME_EXPL_SPR_f)
+resid_panel(ME_EXPL_SPR_f) # NOTE residual plots indicate that the data meet assumptions of LMER without transformation
+anova(ME_EXPL_SPR_f, type=3)
+
+```
+
+
+***Plot - SPR frequency***
+```{r}
+# take means and se per group for plotting SPR FREQUENCY 
+EXPL_SPR_f <- ddply(data_mouse, c("mean_experimental_age", "genotype"), summarise,
+               N    = length(SPRfreq),
+               mean = mean(SPRfreq, na.rm = TRUE),
+               sd   = sd(SPRfreq, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+# Ensure the factor levels are ordered as desired
+EXPL_SPR_f$mean_experimental_age <- factor(EXPL_SPR_f$mean_experimental_age, levels = c("18", "71"))
+data_mouse$mean_experimental_age <- factor(data_mouse$mean_experimental_age, levels = c("18", "71"))
+
+# Combine genotype and age for the x-axis and set specific levels to control order and spacing
+EXPL_SPR_f$genotype_age <- factor(paste(EXPL_SPR_f$genotype, EXPL_SPR_f$mean_experimental_age, sep = "_"),
+                                  levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                             "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+data_mouse$genotype_age <- factor(paste(data_mouse$genotype, data_mouse$mean_experimental_age, sep = "_"),
+                                levels = c("TDP-43_Q331K:WT_18", "TDP-43_Q331K:WT_71", 
+                                           "TDP-43_Q331K:Hom_18", "TDP-43_Q331K:Hom_71"))
+
+# Plot averages per group
+pEXPL_SPR_f <- ggplot(EXPL_SPR_f, aes(x = genotype_age, y = mean, colour = genotype, shape=mean_experimental_age)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.5, alpha = 0) + 
+  geom_jitter(data = data_mouse, aes(x = genotype_age, y = SPRfreq, colour = genotype, shape = mean_experimental_age), 
+              position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.5), size = 0.8) + # Add individual data points
+     geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") + # Add a dashed line at y = 0.5
+
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.2, position = position_dodge(0.5), colour = "black") + # Add error bars
+  ylab("SPR based on frequency") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 1.5, by = 0.5), limits = c(0, 1.5), expand = c(0, 0)) +  # Set y-axis breaks with step size of 0.1
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c("TDP-43_Q331K:WT_18" = bquote(bold(atop("WT", "18 wk"))),
+                              "TDP-43_Q331K:WT_71" = bquote(bold(atop("WT", "71 wk"))), 
+                              "TDP-43_Q331K:Hom_18" = bquote(atop(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"), bold("18 wk"))), 
+                              "TDP-43_Q331K:Hom_71" = bquote(atop(bolditalic("\u2003\u2003\u2003\u2003\u2003Tardbp")^bolditalic("Q331K/Q331K"), bold("\u2003\u2003\u2003\u200371 wk"))) ))+ 
+
+  theme_classic(base_size = 8) + # classic theme makes white background without lines, sets base font size to 14 pt
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.34, 0.92), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial", hjust=0.67),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA)) + # Rotate x-axis labels for better readability
+        scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # sets the order of items in the legend
+                      labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # sets the labels of items in the legend
+                      values = c("#0072B2", "#D55E00")) + # set line colours for points
+  scale_shape_manual(name = "Age (weeks)", # sets the legend title for shape
+                     values = c("18" = 1, "71" = 16)) + # set shapes for ages (16 = filled circle, 1 = empty circle)
+guides(
+    colour = guide_legend(order = 1, override.aes = list(shape=NA)), # Use only lines for Genotype
+    shape = guide_legend(order = 2) # Keep shape legend for Age (weeks)
+  )
+
+# Save the plot
+ggsave("TDP_SPR_f_av_600_col-arial.tiff", plot = pEXPL_SPR_f, width = 3.5, height = 3, dpi = 600)  # Adjust width, height, and dpi as needed and save the image in the folder where the code file is
+
+# Display the plot
+pEXPL_SPR_f
+
+```
+

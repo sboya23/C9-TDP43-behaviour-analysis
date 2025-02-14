@@ -1,0 +1,108 @@
+---
+title: "TDP43 66 weeks marble burying"
+output: html_document
+date: "2025-02-05"
+---
+***Load libraries and data***
+
+```{r}
+library(readr)
+library(forcats)
+library(ggplot2)
+library(ggsignif)
+library(tidyverse)
+library(plyr)
+library(dplyr)
+library(table1)
+library(tidyr)
+library(car)
+library(multcomp)
+
+
+setwd("~/Desktop/Data/Marble burying/")
+
+
+# read in data 67 weeks
+
+data_mouse <- read_csv("TDP-67w-chechedforR_standard_harmonised.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+
+table1::label(data_mouse$genotype) <- "genotype"
+table1::table1(~  genotype, data = data_mouse)
+```
+
+***Stats - Kruskal-Wallis test***
+```{r}
+
+# Perform Kruskal-Wallis test
+kruskal.test(marbles_buried ~ genotype, data = data_mouse)
+
+kruskal_test <- kruskal.test(marbles_buried ~ genotype, data = data_mouse)
+p_value <- kruskal_test$p.value
+
+print(kruskal_test)
+print(p_value)
+
+```
+
+***Plot***
+```{r}
+# Calculate means and standard errors per group for plotting
+EXPL_marb_66 <- ddply(data_mouse, c("genotype"), summarise,
+                    N    = length(marbles_buried),
+                    mean = mean(marbles_buried, na.rm = TRUE),
+                    sd   = sd(marbles_buried, na.rm = TRUE),
+                    se   = sd / sqrt(N))
+
+# Ensure the factor levels are ordered as desired
+EXPL_marb_66$genotype <- factor(EXPL_marb_66$genotype, levels = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+data_mouse$genotype <- factor(data_mouse$genotype, levels = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+
+#Define the annotation outside the ggplot call
+annotation_label <- ifelse(p_value < 0.001, "***",
+                           ifelse(p_value < 0.01, "**",
+                                  ifelse(p_value < 0.05, "*", "ns")))
+
+# Plot averages per group
+pEXPL_marb_66 <- ggplot(EXPL_marb_66, aes(x = genotype, y = mean, colour = genotype)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.1), width = 0.6, alpha = 0) + 
+  geom_jitter(data = data_mouse, aes(x = genotype, y = marbles_buried, colour = genotype), 
+              position = position_jitterdodge(jitter.width = 0.6, dodge.width = 0.1), size = 0.8) + # Add individual data points
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.1, position = position_dodge(0.75), colour = "black") + # Add error bars
+  ylab("Number of marbles buried") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 10, by = 2), limits = c(0, 10), expand = c(0, 0)) +  # Set y-axis breaks with step size of 10
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c("TDP-43_Q331K:WT" = expression(bold("WT")), 
+                              "TDP-43_Q331K:Hom" = expression(bolditalic("Tardbp")^bolditalic("Q331K/Q331K")))) + # Custom labels for genotype
+  theme_classic(base_size = 8) + # Classic theme
+  theme(text = element_text(family = "Arial"),
+    legend.position = "none", # Remove legend
+    axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+    axis.text.x = element_text(size = 8, colour = "black", family = "Arial", hjust = 0.55),  
+    axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+    legend.background = element_rect(fill = NA, colour = NA)) + # Adjust x-axis label size
+  scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # sets the order of items in the legend
+                      values = c("#0072B2", "#D55E00")) + # set line colours for points
+  geom_signif(comparisons = list(c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom")), 
+              annotations = annotation_label, # Use the annotation_label variable
+              y_position = 8, # Adjust this position based on your data range
+              tip_length = 0.01, textsize = 5,
+              color = "black", family = "Arial") # Add significance stars and lines
+
+# Save the plot
+ggsave("TDP43_67w_upd-star_600_nolegend-arial.tiff", plot = pEXPL_marb_66, width = 1.75, height = 1.8, dpi = 600)
+
+# Display the plot
+print(pEXPL_marb_66)
+
+```
+
+

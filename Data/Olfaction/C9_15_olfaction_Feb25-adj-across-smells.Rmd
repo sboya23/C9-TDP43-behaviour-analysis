@@ -1,0 +1,232 @@
+---
+title: "C9orf72 mice - olfaction task - 15 weeks"
+output: html_document
+date: "2024-12-19"
+---
+```{r}
+library(readr)
+library(forcats)
+library(plyr)
+library(dplyr)
+library(lme4)
+library(car)
+library(lmerTest)
+library(emmeans)
+library(ggplot2)
+library(ggResidpanel)
+library(table1)
+
+
+#Set working directory to location of files, if not the same
+setwd("~/Desktop/Data/Olfaction/")
+
+# read in data 
+data_mouse <- read_csv("C9_15weeks_standard_harmonised.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+  sex = 'f',
+  inh = 'f',
+  smell = 'f'
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"))
+data_mouse$smell <- as.factor(data_mouse$smell)
+data_mouse$sex <- as.factor(data_mouse$sex)
+data_mouse$inh <- as.factor(data_mouse$inh)
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+
+
+table1::label(data_mouse$genotype) <- "genotype"
+table1::label(data_mouse$sex) <- "sex"
+table1::label(data_mouse$smell) <- "smell"
+	
+table1::table1(~  smell | genotype, data = data_mouse)
+
+#F1 - familiar mouse odour presented 1st time, F2 - familiar - second time, F3 - familiar third time, N - novel mouse odour, W - water
+
+```
+
+***LMER - olfaction habituation-dishabituation - C9orf72 - 15 weeks***
+```{r}
+#relevel the data to compare everything in the model to control mice
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "C9ORF72-GR400-B6J:WT")
+
+#linear mixed effects model 
+ME_EXPL<- lmer(time~genotype*(sex + smell + inh) + (1|animal_name),data = data_mouse)
+summary(ME_EXPL)
+resid_panel(ME_EXPL)
+anova(ME_EXPL, type=3)
+
+#post-hoc exploring olfactory habituation-dishabituation
+#smell/ habituation comparison by genotype
+emmeans(ME_EXPL, list(pairwise ~ smell|genotype), adjust = "bonferroni")
+
+#post hoc exploring genotype x inh comparison for each smell
+
+total_comparisons <- length(unique(data_mouse$smell)) * length(unique(data_mouse$genotype))
+
+#post hoc exploring genotype x inh comparison for each smell
+emms <- emmeans(ME_EXPL, ~ genotype*inh*smell, 
+                ddf = "Kenward-Roger") # Specify degrees-of-freedom method
+
+# Initialize a list to store results
+results <- list()
+
+# Loop through each level of smell
+smell <- unique(data_mouse$smell)
+
+for (smell in smell) {
+  # Subset emmeans for the current smell level
+  emms_smell <- emmeans(ME_EXPL, ~ genotype * inh*smell, at = list(smell = smell), 
+                      ddf = "Kenward-Roger")
+  
+  # Perform pairwise comparisons for genotype within each inh
+  pairwise_comparisons <- contrast(emms_smell, method = "pairwise", by = "inh")
+  
+  # Extract summary of pairwise comparisons
+  summary_comparisons <- summary(pairwise_comparisons)
+  
+  
+  # Adjust P values for multiple comparisons using Bonferroni correction
+  summary_comparisons$adjusted_p <- p.adjust(summary_comparisons$p.value, method = "bonferroni", n = total_comparisons)
+  
+# Ensure p-values are displayed as decimals
+  summary_comparisons$p.value <- round(as.numeric(summary_comparisons$p.value), 10)
+  summary_comparisons$adjusted_p <- round(as.numeric(summary_comparisons$adjusted_p), 10)
+  
+  # Add additional information
+  summary_comparisons$smell <- smell
+  summary_comparisons$ddf_method <- "Kenward-Roger"
+  summary_comparisons$adjustment_method <- "Bonferroni (Global)"
+  summary_comparisons$family_size <- total_comparisons
+  
+  # Store results in a list
+  results[[as.character(smell)]] <- summary_comparisons
+}
+
+# Combine the results into a single data frame
+all_results <- do.call(rbind, results)
+
+# View the results
+print(all_results)
+
+
+
+```
+***Plot - olfaction habituation-dishabituation - C9orf72 - 15 weeks***
+
+
+```{r}
+# take means and se per group for plotting
+# Calculate means and standard errors per group for plotting
+EXPL_olf_15 <- ddply(data_mouse, c("smell", "genotypeordered"), summarise,
+                    N    = length(time),
+                    mean = mean(time, na.rm = TRUE),
+                    sd   = sd(time, na.rm = TRUE),
+                    se   = sd / sqrt(N))
+
+# Ensure the factor levels are ordered as desired
+EXPL_olf_15$genotypeordered <- factor(EXPL_olf_15$genotypeordered, levels = c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"))
+data_mouse$genotypeordered <- factor(data_mouse$genotypeordered, levels = c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"))
+
+# Plot averages per group
+pEXPL_olf_15 <- ggplot(EXPL_olf_15, aes(x = smell, y = mean, group = genotypeordered, colour = genotypeordered)) +
+  geom_point(size=0.6) + 
+  geom_line(linewidth=0.6) + # Add line plot 
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth=0.2, linetype="solid")+
+  ylab("Time sniffing (s)") + # Sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 50, by = 10), limits = c(0, 50), expand = c(0, 0)) +  # Set y-axis breaks with step size of 10
+  xlab("Odour presentation") + # Sets the x-axis label
+  theme_classic(base_size = 8) + # Classic theme makes white background without lines, sets base font size to 14 pt
+  theme(
+    text = element_text(family = "Arial"),
+    legend.position = c(0.4, 0.98), # Position legend within plotting space
+    legend.direction = "horizontal", # Arrange legend items horizontally
+    legend.text.align = 0,
+    legend.spacing = unit(0, "cm"), # Remove spacing between legend sections
+    legend.key.height = unit(0, "cm"),  # Adjust vertical spacing
+    legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+    legend.title = element_text(size = 8, face="bold", family = "Arial"), # Set font size for legend title
+    axis.title.x = element_text(size = 8, face="bold", family = "Arial"), # Set font size for x-axis label
+    axis.title.y = element_text(size = 8, face="bold", family = "Arial"), 
+    axis.text.x = element_text(size = 8, colour="black", family = "Arial"), # Set font size for x-axis tick labels
+    axis.text.y = element_text(size = 8, colour="black", family = "Arial"),
+    legend.background = element_rect(fill = NA, colour = NA))+# Set font size for y-axis label) + # Adds a legend
+  scale_colour_manual(name = "15 weeks", # Sets the legend title
+                      breaks = c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"), # Sets the order of items in the legend
+                      labels = c("WT", expression(italic("C9orf72")^italic("GR400/+"))), # Sets the labels of items in the legend
+                      values = c("#009E73", "#332288")) # Set line colours
+
+# Save the plot
+ggsave("C9_smell_15weeks_up_600-arial.tiff", plot = pEXPL_olf_15, width = 3.5, height = 2.3, dpi = 600)  # Adjust width, height, and dpi as needed and save as an image in the folder where the code file is
+
+# Display the plot
+pEXPL_olf_15
+
+```
+***Plot by genotype and MAT vs PAT***
+```{r}
+# Aggregate the data including sex
+EXPL_gluc <- ddply(data_mouse, c("smell", "genotypeordered", "inh"), summarise,
+                   N    = length(time),
+                   mean = mean(time, na.rm = TRUE),
+                   sd   = sd(time, na.rm = TRUE),
+                   se   = sd / sqrt(N)
+)
+
+# Ensure the factor levels are ordered
+EXPL_gluc$inh <- factor(EXPL_gluc$inh, levels = c("C9ORF72-GR400-MAT-B6J", "C9ORF72-GR400-PAT-B6J"))
+EXPL_gluc$genotype <- factor(EXPL_gluc$genotype, levels = c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"))
+EXPL_gluc$smell <- factor(EXPL_gluc$smell, levels = c("F1", "F2", "F3", "N1", "N2", "N3", "W1", "W2", "W3"))
+
+# Plot: Genotype (testGroupDescription) by color, Sex by linetype
+pEXPL_gluc <- ggplot(EXPL_gluc, aes(
+  x = smell, 
+  y = mean, 
+  group = interaction(genotype, inh), 
+  colour = genotype,  # Genotype by color
+  linetype = inh  # Sex by line type
+)) +
+  geom_point(size=0.6) + 
+  geom_line(linewidth=0.6) + 
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth=0.2) +
+  ylab("Time sniffing (s)") + 
+  xlab("Odour presentation") + 
+  scale_y_continuous(breaks = seq(0, 50, by = 5), limits = c(0, 50), expand = c(0, 0)) +  
+  theme_classic(base_size = 8) +
+  theme(
+    text = element_text(family = "Arial"),
+    legend.position = "top",  # Change legend position for better visibility
+    legend.direction = "horizontal",
+    legend.text.align = 0,
+    legend.spacing = unit(0, "cm"), 
+    legend.key.height = unit(0, "cm"),  
+    legend.text = element_text(size = 8, family = "Arial"), 
+    legend.title = element_text(size = 8, face="bold", family = "Arial"), 
+    axis.title.x = element_text(size = 8, face="bold", family = "Arial"), 
+    axis.title.y = element_text(size = 8, face="bold", family = "Arial"), 
+    axis.text.x = element_text(size = 8, colour="black", family = "Arial"), 
+    axis.text.y = element_text(size = 8, colour="black", family = "Arial"),
+    legend.background = element_rect(fill = NA, colour = NA)
+  ) +
+  scale_colour_manual(
+    name = "Genotype",  # Legend title for genotype
+    breaks = c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"),
+    labels = c("WT", expression(italic("C9orf72")^italic("GR400/+"))), # Sets the labels of items in the legend
+    values = c("#009E73", "#332288")  # Colors for each genotype
+  ) +
+  scale_linetype_manual(
+    name = "Inheritance",  # Legend title for sex
+    breaks = c("C9ORF72-GR400-MAT-B6J", "C9ORF72-GR400-PAT-B6J"),
+    labels = c("MAT", "PAT"), # Sets the labels of items in the legend
+    values = c("solid", "dashed")  # Male = solid, Female = dashed
+  )
+
+# Save the plot
+ggsave("C9_smell_15weeks_up_600-arial_gen_inh.tiff", plot = pEXPL_gluc, width = 6, height = 4, dpi = 600)
+
+# Display the plot
+pEXPL_gluc
+
+```
+

@@ -1,0 +1,239 @@
+---
+title: "TDP43 mice - elevated plus maze analysis"
+output: html_document
+date: "2025-02-05"
+---
+***Load libraries and data***
+```{r}
+library(readr)       # For reading CSV files
+library(forcats)     # For working with factor variables
+library(lme4)        # For linear mixed-effects models
+library(lmerTest)    # For linear mixed-effects models
+library(ggplot2)     # For plotting
+library(emmeans)     # For post-hoc comparisons
+library(plyr)        # For group-wise summaries (ddply)
+library(dplyr)       # For data manipulation
+library(car)         # For diagnostic tools
+library(multcomp)    # For setting up custom contrasts
+library(ggResidpanel) # For residual diagnostics
+library(table1)
+
+
+setwd("~/Desktop/Data/EPM/")
+
+
+# read in data 
+      
+data_mouse <- read_csv("TDP_EPM_1.1c_removed_standard_harmonised.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+  sex = 'f',
+  Section = "f"
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+data_mouse$Section <- as.factor(data_mouse$Section)
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+data_mouse$sex <- as.factor(data_mouse$sex)
+data_mouse$genotype_Section <- interaction(data_mouse$genotype, data_mouse$Section, sep = "_")
+table1::label(data_mouse$genotype) <- "genotype"
+table1::label(data_mouse$Section) <- "Section"
+table1::label(data_mouse$sex) <- "sex"
+
+	
+table1::table1(~  Section | genotype, data = data_mouse)
+
+
+```
+
+
+***LMER Duration_sec***
+```{r}
+#Duration_sec
+#relevel the data to compare everything in the model to control mice
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effecrts model taking into account 2 batches of mice tested (at 3, 6, 9 months and the other at 10, 14 months)
+ME_EXPL_D<- lmer(Duration_sec~genotype*(sex + Section) + (1|animal_name), data = data_mouse)
+summary(ME_EXPL_D)
+resid_panel(ME_EXPL_D) 
+anova(ME_EXPL_D, type=3)
+#No main effects of interest to follow up in post hoc
+
+
+#boundary (singular) fit: see help('isSingular') => run lm without animal_name as random effect
+ME_EXPL_D_lm<- lm(Duration_sec~genotype*(sex + Section), data = data_mouse)
+summary(ME_EXPL_D_lm)
+resid_panel(ME_EXPL_D_lm) 
+Anova(ME_EXPL_D_lm, type=3)
+
+#No difference in final conclusion, main variation comes from Section, report lmer for consistency
+
+
+
+```
+
+***LMER frequency***
+```{r}
+#relevel the data to compare everything in the model to control mice
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model
+ME_EXPL_F<- lmer(Frequency~genotype*(sex + Section) + (1|animal_name),data = data_mouse)
+summary(ME_EXPL_F)
+resid_panel(ME_EXPL_F)
+anova(ME_EXPL_F, type=3)
+#relevant post-hoc comparisons
+emm <- emmeans(ME_EXPL_F, ~genotype*Section)
+str(emm)
+coef_f <- coef(pairs(emm))
+custom_contrasts <- list("Wt vs Hom closed" = c(1, -1, 0, 0, 0, 0),
+                         "Wt vs Hom open" = c(0, 0, 1, -1, 0, 0),
+                         "Wt vs Hom centre" = c(0, 0, 0, 0, 1, -1))
+specific_comparisons <-contrast(emm, custom_contrasts)
+summary_comparisons <- summary(specific_comparisons, adjust="bonferroni")
+print(summary_comparisons)
+
+```
+
+
+***Plot exploration time by Section:***
+
+```{r}
+#Duration_sec
+# take means and se per group for plotting Duration_sec
+
+
+EXPL_EPM_D <- ddply(data_mouse, c("Section", "genotype"), summarise,
+               N    = length(Duration_sec),
+               mean = mean(Duration_sec, na.rm = TRUE),
+               sd   = sd(Duration_sec, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+# Ensure the factor levels are ordered as desired
+EXPL_EPM_D$genotype <- factor(EXPL_EPM_D$genotype, levels = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+EXPL_EPM_D$Section <- factor(EXPL_EPM_D$Section, levels = c("closed", "centre", "open"))
+data_mouse$Section <- factor(data_mouse$Section, levels = c("closed", "centre", "open"))
+
+#plot averages per group
+pEXPL_EPM_D <- ggplot(EXPL_EPM_D, aes(x = genotype, y = mean, group = Section, colour = genotype, shape = Section)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.7, alpha = 0) + # Transparent bars
+  geom_jitter(data = data_mouse, aes(x = genotype, y = Duration_sec, shape = Section, colour = genotype), 
+              position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.7), size = 0.8) + # Individual data points
+    geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, position = position_dodge(width = 0.7), colour="black") + # Error bars
+
+  ylab("Duration (s)") + # Y-axis label
+  scale_y_continuous(breaks = seq(0, 350, by = 50), limits = c(0, 350), expand = c(0, 0)) + # Y-axis limits
+  xlab(NULL) + # X-axis label
+  scale_x_discrete(labels = c(
+    "TDP-43_Q331K:WT" = expression(bold("WT")), 
+    "TDP-43_Q331K:Hom" = expression(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"))
+  )) + # Custom x-axis labels for genotype
+  theme_classic(base_size = 8) + # Classic theme
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.45, 0.93), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial"),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA))+ # Legend positioning
+  scale_shape_manual(
+    name = "Section", # Legend title for shape
+    values = c("closed" = 16, "centre" = 4, "open" = 1) # Shapes for sections
+  ) +
+  scale_colour_manual(
+    name = NULL, # Legend title for genotype colors
+    breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"),
+    labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))),
+    values = c("#0072B2", "#D55E00")
+  ) +
+  guides(
+    colour = guide_legend(order = 1, override.aes = list(shape = NA)), 
+    shape = guide_legend(order = 2)
+  )
+
+# Save the plot
+ggsave("TDP_EPM_av_dur_1.1c_removed_600_arial.tiff", plot = pEXPL_EPM_D, width = 3.5, height = 3, dpi = 600)
+
+# Display the plot
+print(pEXPL_EPM_D)
+
+
+```
+
+
+
+***Plot exploration frequency  by Section:***
+```{r}
+#FREQUENCY
+# take means and se per group for plotting Frequency
+
+
+EXPL_EPM_F <- ddply(data_mouse, c("Section", "genotype"), summarise,
+               N    = length(Frequency),
+               mean = mean(Frequency, na.rm = TRUE),
+               sd   = sd(Frequency, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+
+# Ensure the factor levels are ordered as desired
+EXPL_EPM_F$genotype <- factor(EXPL_EPM_F$genotype, levels = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+EXPL_EPM_F$Section <- factor(EXPL_EPM_F$Section, levels = c("closed", "centre", "open"))
+data_mouse$Section <- factor(data_mouse$Section, levels = c("closed", "centre", "open"))
+
+#plot averages per group
+pEXPL_EPM_F <- ggplot(EXPL_EPM_F, aes(x = genotype, y = mean, group = Section, colour = genotype, shape = Section)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.7, alpha = 0) + # Transparent bars
+  geom_jitter(data = data_mouse, aes(x = genotype, y = Frequency, shape = Section, colour = genotype), 
+              position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.7), size = 0.8) + # Individual data points
+    geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, position = position_dodge(width = 0.7), colour="black") + # Error bars
+
+  ylab("Frequency") + # Y-axis label
+  scale_y_continuous(breaks = seq(0, 40, by = 10), limits = c(0, 40), expand = c(0, 0)) + # Y-axis limits
+  xlab(NULL) + # X-axis label
+  scale_x_discrete(labels = c(
+    "TDP-43_Q331K:WT" = expression(bold("WT")), 
+    "TDP-43_Q331K:Hom" = expression(bolditalic("Tardbp")^bolditalic("Q331K/Q331K"))
+  )) + # Custom x-axis labels for genotype
+  theme_classic(base_size = 8) + # Classic theme
+  theme(text = element_text(family = "Arial"),
+    legend.position = c(0.45, 0.93), 
+        legend.direction = "horizontal", # Arrange legend items horizontally
+        legend.text.align = 0, 
+        legend.spacing.y = unit(0, "cm"), # Remove vertical spacing between items
+        legend.margin = margin(0, 0, 0, 0)  ,      
+        legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+        legend.title = element_text(size = 8, face = "bold", family = "Arial"), # Set font size for legend title
+        axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+        axis.text.x = element_text(size = 8, colour="black", family = "Arial"),  
+        axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+        legend.background = element_rect(fill = NA, colour = NA))+ # Legend positioning
+  scale_shape_manual(
+    name = "Section", # Legend title for shape
+    values = c("closed" = 16, "centre" = 4, "open" = 1) # Shapes for sections
+  ) +
+  scale_colour_manual(
+    name = NULL, # Legend title for genotype colors
+    breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"),
+    labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))),
+    values = c("#0072B2", "#D55E00")
+  ) +
+  guides(
+    colour = guide_legend(order = 1, override.aes = list(shape = NA)), 
+    shape = guide_legend(order = 2)
+  )
+
+# Save the plot
+ggsave("TDP_EPM_av_freq_1.1c_removed_600_arial.tiff", plot = pEXPL_EPM_F, width = 3.5, height = 3, dpi = 600)
+
+# Display the plot
+print(pEXPL_EPM_F)
+
+
+```

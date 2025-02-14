@@ -1,0 +1,192 @@
+---
+title: "Tdp43 mice - weight"
+output: html_document
+date: "2024-02-05"
+---
+
+***Load libraries and data***
+
+```{r}
+library(readr)
+library(forcats)
+library(lme4)
+library(ggplot2)
+library(lmerTest)
+library(emmeans)
+library(ggResidpanel)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(car)
+library(table1)
+#Set working directory to location of files, if not the same
+setwd("~/Desktop/Data/Weight and echo-MRI/")
+
+
+# read in data 
+      
+data_mouse <- read_csv("output_long_weight_TDP_averaged_multiples_n3.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+  sex = 'f',
+  age_weeks = 'f'
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"))
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+data_mouse$age_weeks <- as.factor(data_mouse$age_weeks)
+data_mouse$sex <- as.factor(data_mouse$sex)
+data_mouse$animal_name <- as.factor(data_mouse$animal_name)
+
+table1::label(data_mouse$genotype) <- "genotype"
+table1::label(data_mouse$sex) <- "sex"
+table1::label(data_mouse$age_weeks) <- "age_weeks"
+	
+table1::table1(~  age_weeks | genotype, data = data_mouse)
+
+
+
+```
+
+***LMER - weight - Tdp43***
+
+
+```{r}
+#relevel the data to compare everything in the model to control mice
+data_mouse$genotype <- relevel(data_mouse$genotype, ref = "TDP-43_Q331K:WT")
+
+#linear mixed effects model 
+ME_EXPL<- lmer(averageweight~genotype*(age_weeks + sex) + age_weeks*sex + (1|animal_name),data = data_mouse)
+summary(ME_EXPL)
+resid_panel(ME_EXPL) 
+anova(ME_EXPL, type=3)
+
+# Compute total number of comparisons across all age levels
+total_comparisons <- length(unique(data_mouse$age_weeks)) * length(unique(data_mouse$genotype))
+
+# Compute estimated marginal means (EMMs)
+emms <- emmeans(ME_EXPL, ~ genotype * sex | age_weeks, 
+                ddf = "Kenward-Roger")  # Specify degrees-of-freedom method
+
+# Initialize a list to store results
+results <- list()
+
+# Loop through each level of age_weeks
+age_levels <- unique(data_mouse$age_weeks)
+
+for (age in age_levels) {
+  # Subset emmeans for the current age_weeks level
+  emms_age <- emmeans(ME_EXPL, ~ genotype * sex, at = list(age_weeks = age), 
+                      ddf = "Kenward-Roger")
+  
+  # Perform pairwise comparisons for sex within each genotype
+  pairwise_comparisons <- contrast(emms_age, method = "pairwise", by = "sex")
+  
+  # Extract summary of pairwise comparisons
+  summary_comparisons <- summary(pairwise_comparisons)
+  
+  # Check if there are any comparisons to adjust
+  if (nrow(summary_comparisons) > 0) {
+    # Adjust P values for multiple comparisons using Bonferroni correction
+    num_tests <- length(summary_comparisons$p.value)  # Number of actual comparisons
+    summary_comparisons$adjusted_p <- p.adjust(summary_comparisons$p.value, 
+                                               method = "bonferroni", 
+                                               n = max(total_comparisons, num_tests))
+    
+    # Ensure p-values are displayed as decimals
+    summary_comparisons$p.value <- round(as.numeric(summary_comparisons$p.value), 10)
+    summary_comparisons$adjusted_p <- round(as.numeric(summary_comparisons$adjusted_p), 10)
+    
+    # Add additional information
+    summary_comparisons$age_weeks <- age
+    summary_comparisons$ddf_method <- "Kenward-Roger"
+    summary_comparisons$adjustment_method <- "Bonferroni (Global)"
+    summary_comparisons$family_size <- total_comparisons
+    
+    # Store results in a list
+    results[[as.character(age)]] <- summary_comparisons
+  }
+}
+
+# Combine the results into a single data frame
+all_results <- do.call(rbind, results)
+
+# View the results
+print(all_results)
+
+
+
+
+```
+
+***Plot - weight - Tdp43 by genotype, age and sex***
+
+```{r}
+# take means and se per group for plotting
+data_mouse <- data_mouse %>%
+  mutate(genotype_sex = paste(genotype, sex, sep = "_"))
+
+EXPL_weight <- ddply(data_mouse, c("age_weeks", "genotype_sex", "sex", "genotype"), summarise,
+               N    = length(averageweight),
+               mean = mean(averageweight, na.rm = TRUE),
+               sd   = sd(averageweight, na.rm = TRUE),
+               se   = sd / sqrt(N)
+)
+EXPL_weight$age_weeks <- factor(EXPL_weight$age_weeks, levels = sort(as.numeric(levels(EXPL_weight$age_weeks))))
+
+# Select every otherx2 level for age_weeks
+display_levels <- levels(EXPL_weight$age_weeks)[seq(1, length(levels(EXPL_weight$age_weeks)), by = 8)]
+
+#plot averages per group
+pEXPL_weight <- ggplot(EXPL_weight, aes(x = age_weeks, y = mean, group = genotype_sex, linetype = sex, colour = genotype)) +
+#  geom_point(size=0.4) + 
+  geom_line(linewidth=0.6) + # Add line plot 
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth=0.2, linetype="solid") + # Add error bars
+  ylab("Weight (g)")  + # Set the y-axis label
+  scale_y_continuous(breaks = seq(0, 60, by = 10), limits = c(0, 60), expand = c(0, 0)) +  # Set y-axis breaks with step size of 5
+  xlab("Age (weeks)")  + # Set the x-axis label
+  scale_x_discrete(
+    breaks = display_levels, # Display every other level
+    labels = display_levels  # Use the same levels for the labels
+  )+
+  theme_classic(base_size = 8) + # Classic theme, white background, base font size 8
+  theme(
+    text = element_text(family = "Arial"),
+    legend.position = c(0.35, 0.92), # Position legend within plotting space
+    legend.direction = "horizontal", # Arrange legend items horizontally
+    legend.text.align = 0,
+    legend.spacing = unit(0, "cm"), # Remove spacing between legend sections
+    legend.key.height = unit(0, "cm"),  # Adjust vertical spacing
+    legend.text = element_text(size = 8, family = "Arial"), # Set font size for legend text
+    legend.title = element_text(size = 8, face="bold", family = "Arial"), # Set font size for legend title
+    axis.title.x = element_text(size = 8, face="bold", family = "Arial"), # Set font size for x-axis label
+    axis.title.y = element_text(size = 8, face="bold", family = "Arial"),
+    axis.text.x = element_text(size = 8, colour="black", family = "Arial"), # Set font size for x-axis tick labels
+    axis.text.y = element_text(size = 8, colour="black", family = "Arial")# Set font size for y-axis label
+  ) +
+  scale_colour_manual(name = NULL, # Customize the color legend
+    breaks = c("TDP-43_Q331K:WT", "TDP-43_Q331K:Hom"), # Order of items in legend
+    labels = c("WT", expression(italic("Tardbp")^italic("Q331K/Q331K"))), # Labels in legend
+    values = c("#0072B2", "#D55E00") # Colors for genotypes
+  ) +
+  scale_linetype_manual(name = NULL, # Customize the line type legend
+    breaks = c("f", "m"), # Order of items in legend
+    labels = c("Female", "Male"), # Labels in legend
+    values = c("solid", "dashed") # Line types for sex
+  )+
+guides(
+    colour = guide_legend(order = 1), # Genotype appears first
+    linetype = guide_legend(order = 2) # Sex appears second
+  )
+# Save the plot
+ggsave("TDP_weight_linetype_colour_600_legend-arial.tiff", width =3.5, height = 3, dpi = 600)  # Save as an image
+
+# Display the plot
+pEXPL_weight
+
+
+
+```
+
+
+

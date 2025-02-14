@@ -1,0 +1,93 @@
+---
+title: "C9orf72 14 weeks marble burying"
+output: html_document
+date: "2025-02-05"
+---
+***Load libraries and data***
+
+```{r}
+library(readr)
+library(forcats)
+library(ggplot2)
+library(tidyverse)
+library(plyr)
+library(dplyr)
+library(table1)
+library(tidyr)
+library(car)
+library(multcomp)
+library(table1)
+
+
+setwd("~/Desktop/Data/Marble burying/")
+
+
+# read in data 14 weeks
+
+data_mouse <- read_csv("C9-14w-chechedforR_standard_harmonised.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"))
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+
+
+table1::label(data_mouse$genotype) <- "genotype"
+table1::table1(~  genotype, data = data_mouse)
+
+```
+
+***Stats - Kruskal-Wallis test***
+```{r}
+kt <-kruskal.test(marbles_buried ~ genotype, data = data_mouse) 
+print(kt)
+
+```
+
+***Plot***
+```{r}
+# Calculate means and standard errors per group for plotting
+EXPL_marb_14 <- ddply(data_mouse, c("genotype"), summarise,
+                    N    = length(marbles_buried),
+                    mean = mean(marbles_buried, na.rm = TRUE),
+                    sd   = sd(marbles_buried, na.rm = TRUE),
+                    se   = sd / sqrt(N))
+
+# Ensure the factor levels are ordered as desired
+EXPL_marb_14$genotype <- factor(EXPL_marb_14$genotype, levels = c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"))
+data_mouse$genotype <- factor(data_mouse$genotype, levels = c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"))
+
+# Plot averages per group
+pEXPL_marb_14 <- ggplot(EXPL_marb_14, aes(x = genotype, y = mean, colour = genotype)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.1), width = 0.6, alpha = 0) + 
+  geom_jitter(data = data_mouse, aes(x = genotype, y = marbles_buried, colour = genotype), 
+              position = position_jitterdodge(jitter.width = 0.6, dodge.width = 0.1), size = 0.8) + # Add individual data points
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.1, position = position_dodge(0.75), colour="black") + # Add error bars
+
+  ylab("Number of marbles buried") + # sets the y-axis label
+  scale_y_continuous(breaks = seq(0, 10, by = 2), limits = c(0, 10), expand = c(0, 0)) +  # Set y-axis breaks with step size of 10
+  xlab(NULL) + # sets the x-axis label
+  scale_x_discrete(labels = c(
+    "C9ORF72-GR400-B6J:WT" = expression(bold("WT")), 
+    "C9ORF72-GR400-B6J:Het" = expression(bolditalic("C9orf72")^bolditalic("GR400/+")))) + # Custom labels for genotype
+  theme_classic(base_size = 8) + # Classic theme
+  theme(text = element_text(family = "Arial"),
+    legend.position = "none", # Remove legend
+    axis.title.y = element_text(size = 8, face = "bold", family = "Arial"), 
+    axis.text.x = element_text(size = 8, colour = "black", family = "Arial"),  
+    axis.text.y = element_text(size = 8, colour = "black", family = "Arial"),
+    legend.background = element_rect(fill = NA, colour = NA)) + # Adjust x-axis label size
+  scale_colour_manual(name = NULL, # sets the legend title     
+                      breaks = c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"), # sets the order of items in the legend
+                      values = c("#009E73", "#332288")) # set line colours for points
+
+# Save the plot
+ggsave("C9_marb_14_av_no_legend-arial.tiff", plot = pEXPL_marb_14, width = 1.75, height = 1.8, dpi = 600)  # Adjust width, height, and dpi as needed and save the image in the folder where the code file is
+
+# Display the plot
+pEXPL_marb_14
+
+```

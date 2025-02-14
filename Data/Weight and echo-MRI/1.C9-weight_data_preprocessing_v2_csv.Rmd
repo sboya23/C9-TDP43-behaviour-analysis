@@ -1,0 +1,106 @@
+***Import libraries and set wd***
+
+```{r}
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(purrr)
+library(readr)
+library(table1)
+
+
+#Set working directory to location of files, if not the same
+setwd ("~/Desktop/Data/Weight and echo-MRI/")
+
+```
+
+```{r}
+
+#***Pre-processing***#
+
+
+##########################################################
+# There are mice with more than one measurement per age  #                              
+#    Find these and average the multiple measurements    #
+#                        🐭🐭🐭                          #                
+##########################################################
+
+#remove columns with no information present or ones not relevant to the analysis to make clearer output of weight data, 
+#remove the parameter column - because all data is the speadsheet is weight
+df <- read.csv("C9ORFBehav_Weight_processed_data.csv")
+print(colnames(df))
+
+data_weight<- within(df, rm(genotype, sex.gen, date_of_experiment, experimenter, birth.date, batch, animal_id, parameter)) 
+#rename important columns - age weeks
+names(data_weight)[names(data_weight) == "age.weeks"] <- "age_weeks"
+names(data_weight)[names(data_weight) == "stock"] <- "inh" #inh = inheritance - parental origin of allele
+print(colnames(data_weight))
+
+#Average multiple measurements for the same animal and the same age to four decimal places
+df_avg_weight <- data_weight %>%
+  group_by(animal_name, age_weeks, inh) %>%
+  summarise(averageweight = round(mean(data, na.rm = TRUE), 4))  
+print(df_avg_weight)
+
+
+#Import sex and genotype
+C9_gen_sex <- read.csv("C9-genotype-sex.csv")
+# Match genotypes from df1 to df2 by Animal_ID
+ matched_all_df_avg_weight <- df_avg_weight %>%
+       left_join(C9_gen_sex, by = "animal_name")
+print(matched_all_df_avg_weight)
+
+
+#Save pre-processed file as a csv
+write.csv(matched_all_df_avg_weight, "output_long_weight_C9_averaged_multiples.csv", row.names = FALSE)
+ 
+```
+
+```{r}
+#Read data and filter out genotype x age groups with less than 3 mice present
+data_mouse <- read_csv("output_long_weight_C9_averaged_multiples.csv", col_types = cols (
+  animal_name = 'f',
+  genotype = 'f',
+  sex = 'f',
+  inh = 'f',
+  age_weeks = 'f'
+))
+
+data_mouse$genotypeordered <- ordered(data_mouse$genotype, levels=c("C9ORF72-GR400-B6J:WT", "C9ORF72-GR400-B6J:Het"))
+data_mouse$genotype <- as.factor(data_mouse$genotype)
+data_mouse$age_weeks <- as.factor(data_mouse$age_weeks)
+data_mouse$sex <- as.factor(data_mouse$sex)
+data_mouse$inh <- as.factor(data_mouse$inh)
+data_mouse$animal_name <- as.factor(data_mouse$animal_name)
+table1::label(data_mouse$genotype) <- "genotype"
+table1::label(data_mouse$sex) <- "sex"
+table1::label(data_mouse$age_weeks) <- "age_weeks"
+	
+table1::table1(~  age_weeks | genotype, data = data_mouse)
+
+
+#Manually remove
+#Look through the table below for groups with less than 3 mice per genotype per age
+#Remove 40 weeks manually because it has group with less than 3 mine - WT has n=2, go to _multiples.csv, filter by age - filter the 40 weeks time point - delete all lines from this age
+#Save the new file as output_long_weight_C9_averaged_multiples_n3
+#Run C9-weight script on the newly saved _n3.csv file
+
+#Automatic removal
+ages_to_remove <- data_mouse %>%
+  group_by(age_weeks, genotype) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  filter(count < 3) %>%
+  pull(age_weeks) %>%
+  unique()
+print(ages_to_remove)
+# Remove all rows with these age_weeks
+data_mouse_cleaned <- data_mouse %>%
+  filter(!age_weeks %in% ages_to_remove)
+
+# View the cleaned data
+head(data_mouse_cleaned)
+write.csv(data_mouse_cleaned, "output_long_weight_C9_averaged_multiples_n3.csv", row.names = FALSE)
+
+```
+
