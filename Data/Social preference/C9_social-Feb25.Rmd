@@ -665,7 +665,7 @@ pEXPL_time_o_inh <- ggplot(EXPL_time_o_inh, aes(x = inh_age, y = mean, colour = 
     "C9ORF72-GR400-MAT-B6J_18.5" = bquote(bold(atop("MAT", "18.5 wk"))),
     "C9ORF72-GR400-MAT-B6J_70" = bquote(bold(atop("MAT", "70 wk"))),
     "C9ORF72-GR400-PAT-B6J_18.5" = bquote(bold(atop("PAT", "18.5 wk"))),
-    "C9ORF72-GR400-MAT-B6J_70" = bquote(bold(atop("PAT", "70 wk")))
+    "C9ORF72-GR400-PAT-B6J_70" = bquote(bold(atop("PAT", "70 wk")))
   ))+ # Custom labels for genotype and age
   theme_classic(base_size = 8) + # classic theme makes white background without lines, sets base font size to 14 pt
   theme(
