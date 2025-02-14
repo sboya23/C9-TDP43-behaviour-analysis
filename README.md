@@ -1,7 +1,10 @@
-Data and processing scripts which reproduce the statistical analysis in the paper (C9orf72, Tdp43 mouse models behaviour) and the individual figure pannels as tiffs.
-For best results run in RStudio.
+Data and processing scripts for analysis of behavioural tests in mice.
 
-After extracting the folder, paste on your Desktop or change the working directory to the relevant one.
+Download scripts and data files.
+
+Run .rmd analysis files from each folder.
+
+After extracting the Data folder change the working directory to the correct one for you.
 
 EPM folder - contains scripts for statistical analysis (.rmd) and plotting for C9, and TDP43, as well as raw data files (.csv) (4 files in total)
 
