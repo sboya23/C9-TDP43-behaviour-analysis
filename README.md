@@ -7,7 +7,7 @@
 >After extracting the Data folder change the working directory in each .rmd file to the correct one for you.
 
 >
->Run .rmd analysis files within each folder.
+>Run .Rmd analysis files within each folder, clean RStudio workspace inbetween scripts.
 
 ## Contents
 
